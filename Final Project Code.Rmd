@@ -1,0 +1,461 @@
+---
+title: "Final Project Code"
+author: "Kekun Han"
+date: "16/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+devtools::install_github("hodgettsp/cesR")
+library(broom)
+library(cesR)
+library(tidyverse)
+library(labelled)
+library(lme4)
+library(haven)
+```
+
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Load the CES dataset and clean it
+# The instruction of download the CES dataset can be found here http://www.ces-eec.ca/
+ces2019_web <- read_dta("~/inst/extdata/ces2019_web/ces2019_web.dta")
+ces_2019 <- to_factor(ces2019_web)
+survey_data_raw <- ces_2019 %>%
+  select(cps19_ResponseId,
+         cps19_citizenship,
+         cps19_age,
+         cps19_education,
+         cps19_province,
+         cps19_gender,
+         cps19_votechoice,
+         cps19_v_advance,
+         cps19_employment,
+         cps19_children,
+         cps19_income_cat,
+         cps19_marital) %>%
+  rename(ID = cps19_ResponseId,
+         citizenship = cps19_citizenship,
+         education = cps19_education,
+         province = cps19_province,
+         gender = cps19_gender,
+         employment = cps19_employment,
+         children = cps19_children,
+         income = cps19_income_cat,
+         marital = cps19_marital)
+survey_data <- survey_data_raw
+```
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# CES data cleaning
+for (i in (1:nrow(survey_data))){
+  if (is.na(survey_data$cps19_votechoice[i]) == TRUE){
+    survey_data$cps19_votechoice[i] = survey_data$cps19_v_advance[i]}
+}
+
+survey_data <- survey_data %>% select(-cps19_v_advance) %>% filter(cps19_votechoice != "Don't know/ Prefer not to answer") 
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# CES data cleaning
+survey_data <- survey_data %>%
+  mutate(age_group = case_when(cps19_age <= 30 ~ '18to30',
+                               cps19_age > 30 & cps19_age <= 40 ~ "31to40",
+                               cps19_age > 40 & cps19_age <= 50 ~ "41to50",
+                               cps19_age > 50 & cps19_age <= 60 ~ "51to60",
+                               cps19_age > 60 & cps19_age <= 70 ~ "61to70",
+                               cps19_age > 70 ~ "70plus")) %>%
+  mutate(Education = case_when(education == "No schooling" | education == "Some elementary school" | education == "Completed elementary school" | education == "Some secondary/ high school" ~ "less than high school",
+                               education == "Completed secondary/ high school" ~ "high school",
+                               education == "Some technical, community college, CEGEP, College Classique" | education == "Completed technical, community college, CEGEP, College Classique" ~ "college",
+                               education == "Some university" ~ "some university",
+                               education == "Bachelor's degree" ~ "bachelor's degree", education == "Master's degree" | education == "Professional degree or doctorate" ~ "above bachelor", education == "Don't know/ Prefer not to answer" ~ "don't know/ prefer not to answer")) %>%
+  mutate(sex = case_when(gender == "A woman" ~ "Female", gender == "A man" | gender == "Other (e.g. Trans, non-binary, two-spirit, gender-queer)" ~ "Male")) %>%
+  mutate(vote_liberal = 
+           ifelse(cps19_votechoice =="Liberal Party", 1, 0)) %>% 
+  mutate(vote_conservative =
+           ifelse(cps19_votechoice =="Conservative Party", 1, 0))%>%
+  mutate(vote_ndp =
+           ifelse(cps19_votechoice == "ndp",1,0))%>%
+   mutate(vote_green =
+           ifelse(cps19_votechoice == "Green Party",1,0))%>%
+  select(-cps19_votechoice, -citizenship, -cps19_age, -education, -gender) %>% na.omit()
+
+```
+
+```{r , echo = FALSE, message= FALSE}
+hist(ces_2019$cps19_age, xlab = "age", main = "Distribution of respondents' age, figure 1")
+```
+
+```{r , echo = FALSE, message= FALSE}
+# Demonstration of the cleaned CES data
+library(kableExtra)
+set.seed(1)
+sample_n(survey_data,6) %>%
+  kbl() %>%
+  kable_classic(html_font = "Cambria") %>%
+  kable_styling(full_width = F, position = "left") %>%
+  footnote(general = "A demonstration of the sturcutre of the cleaned CES dataset", number = c("The variable “vote_liberal” is 1 only when a respondent votes for the Liberal party","The variable “vote_conservative” is 1 only when a respondent votes for the Conservative party", "the variable “vote_ndp” is 1 only when a respondent votes for the NDP party", "The variable “vote_green” is 1 only when a respondent votes for the Green party", "There are 8204 observations in the cleaned dataset, only 6 of them are shown here"), general_title = "Table 1", number_title = "Note")
+
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#load the GSS data and clean it
+#The GSS data is downloaded from https://sda-artsci-utoronto-ca.myaccess.library.utoronto.ca/sdaweb/html/gss.htm
+pos_data_raw <- read.csv("gss.csv")
+
+pos_data <- pos_data_raw %>%
+  select(age,
+         total_children,
+         sex,
+         province,
+         education,
+         occupation,
+         income_respondent,
+         marital_status) %>% filter(age >= 18) %>% na.omit()
+
+pos_data <- pos_data %>%
+  mutate(age_group = case_when(age <= 30 ~ '18to30',
+                               age > 30 & age <= 40 ~ "31to40",
+                               age > 40 & age <= 50 ~ "41to50",
+                               age > 50 & age <= 60 ~ "51to60",
+                               age > 60 & age <= 70 ~ "61to70",
+                               age > 70 ~ "70plus")) %>%
+  mutate(Education = case_when(education == "Less than high school diploma or its equivalent" ~ "less than high school",
+                               education == "High school diploma or a high school equivalency certificate" ~ "high school",
+                               education == "Trade certificate or diploma" | education == "College, CEGEP or other non-university certificate or di..." ~ "college",
+                               education == "University certificate or diploma below the bachelor's level" ~ "some university",
+                               education == "Bachelor's degree (e.g. B.A., B.Sc., LL.B.)" ~ "bachelor's degree", education == "University certificate, diploma or degree above the bach..." ~ "above bachelor", education == "Don't know" | education == "Refusal" | education == "Not stated" ~ "don't know/ prefer not to answer")) %>%
+  mutate(marital = case_when(marital_status == "Married" ~ "Married", marital_status == "Living common-law" ~ "Living with a partner",marital_status == "Widowed" ~ "Widowed",marital_status == "Separated" ~ "Separated",marital_status == "Divorced" ~ "Divorced",marital_status == "Single, never married" ~ "Never Married",marital_status == "Don't know" | marital_status == "Refusal" ~ "Don't know/ Prefer not to answer" )) %>%
+  mutate(children = case_when(total_children == 0 ~  "No", total_children >= 1 ~ "Yes", is.na(total_children) == TRUE ~ "Don't know/ Prefer not to answer")) %>% select(-total_children, -education, -occupation, -income_respondent, -marital_status, -age, -children) %>% na.omit()
+  
+pos_data <- pos_data %>%
+  count(age_group,Education,marital,sex,province) %>%
+  group_by(age_group,Education,marital,sex,province)
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#Build the full model
+md1 <- glmer(vote_liberal ~ Education + sex  + age_group  + employment + children + income + marital + (1 | province), data = survey_data, family = binomial )
+
+summary(md1)
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#Build alternative models around significant predictors
+md2 <- glmer(vote_liberal ~ Education + sex  + age_group  + children + marital + (1 | province), data = survey_data, family = binomial )
+
+
+md3 <- glmer(vote_liberal ~ Education + sex  + age_group  + children + income + marital + (1 | province), data = survey_data, family = binomial )
+
+
+md4 <- glmer(vote_liberal ~ Education + sex  + age_group  + employment + children  + marital + (1 | province), data = survey_data, family = binomial )
+```
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#Compare AIC and BIC
+mean(AIC(md1),BIC(md1))
+mean(AIC(md2),BIC(md2))
+mean(AIC(md3),BIC(md3))
+mean(AIC(md4),BIC(md4))
+```
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+summary(md2)
+```
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#Build final model
+md5 <- glmer(vote_liberal ~ Education + sex  + age_group + marital + (1 | province), data = survey_data, family = binomial )
+
+summary(md5)
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#check the VIF of final model
+car::vif(md5)
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+#Create other models which predict for other parties
+md_lib <- md5
+
+md_con <- glmer(vote_conservative ~ Education + sex  + age_group + marital + (1 | province), data = survey_data, family = binomial ) 
+
+md_ndp <- glmer(vote_ndp ~ Education + sex  + age_group + marital + (1 | province), data = survey_data, family = binomial ) 
+
+md_gre <- glmer(vote_green ~ Education + sex  + age_group + marital + (1 | province), data = survey_data, family = binomial ) 
+  
+summary(md_con)
+summary(md_ndp)
+summary(md_gre)
+```
+
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Perform poststratification for the Liberal party
+pos_data$logodds_estimate_lib <-
+  md_lib %>%
+  predict(newdata = pos_data)
+
+pos_data$estimate_lib <-
+  exp(pos_data$logodds_estimate_lib)/(1+exp(pos_data$logodds_estimate_lib))
+
+pos_data %>% 
+  mutate(alp_predict_prop_lib = estimate_lib*n) %>%
+  summarise(alp_predict_lib = sum(alp_predict_prop_lib)/sum(n))
+
+```
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Perform poststratification for the Conservative party
+pos_data$logodds_estimate_con <-
+  md_con %>%
+  predict(newdata = pos_data)
+
+pos_data$estimate_con <-
+  exp(pos_data$logodds_estimate_con)/(1+exp(pos_data$logodds_estimate_con))
+
+pos_data %>%
+  mutate(alp_predict_prop_con = estimate_con*n) %>%
+  summarise(alp_predict_con = sum(alp_predict_prop_con)/sum(n))
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Perform poststratification for the NDP 
+pos_data$logodds_estimate_ndp <-
+  md_ndp %>%
+  predict(newdata = pos_data)
+
+pos_data$estimate_ndp <-
+  exp(pos_data$logodds_estimate_ndp)/(1+exp(pos_data$logodds_estimate_ndp))
+
+pos_data %>%
+  mutate(alp_predict_prop_ndp = estimate_ndp*n) %>%
+  summarize(alp_predict_ndp = sum(alp_predict_prop_ndp)/sum(n))
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Perform poststratification for the Green party
+pos_data$logodds_estimate_gre <-
+  md_gre %>%
+  predict(newdata = pos_data)
+
+pos_data$estimate_gre <-
+  exp(pos_data$logodds_estimate_gre)/(1+exp(pos_data$logodds_estimate_gre))
+
+pos_data %>%
+  mutate(alp_predict_prop_gre = estimate_gre*n) %>%
+  summarize(alp_predict_gre = sum(alp_predict_prop_gre)/sum(n))
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Find out the vote in each province
+Ontario <- pos_data %>% filter(province == "Ontario")
+
+British_Columbia <- pos_data %>% filter(province == "British Columbia")
+
+Alberta <- pos_data %>% filter(province == "Alberta")
+
+Manitoba <- pos_data %>% filter(province == "Manitoba")
+
+New_Brunswick <- pos_data %>% filter(province == "New Brunswick")
+
+New_F_L <- pos_data %>% filter(province == "Newfoundland and Labrador")
+
+Nova_Scotia <- pos_data %>% filter(province == "Nova Scotia")
+
+P_E_I <- pos_data %>% filter(province == "Prince Edward Island")
+
+Quebec <- pos_data %>% filter(province == "Quebec")
+
+Saskatchewan <- pos_data %>% filter(province == "Saskatchewan")
+
+```
+
+```{r, message= FALSE, echo = FALSE, include= FALSE}
+# Obtain overall vote share of the 10 provinces
+lib_v <- sum(10484419*mean(Ontario$estimate_lib),927347*mean(Manitoba$estimate_lib),3023980*mean(Alberta$estimate_lib),616704*mean(New_Brunswick$estimate_lib),420067*mean(New_F_L$estimate_lib),771411*mean(Nova_Scotia$estimate_lib),116721*mean(P_E_I$estimate_lib),6482847*mean(Quebec$estimate_lib), 807984*mean(Saskatchewan$estimate_lib), 3641258*mean(British_Columbia$estimate_lib))/27373058
+
+Con_v <- sum(10484419*mean(Ontario$estimate_con),927347*mean(Manitoba$estimate_con),3023980*mean(Alberta$estimate_con),616704*mean(New_Brunswick$estimate_con),420067*mean(New_F_L$estimate_con),771411*mean(Nova_Scotia$estimate_con),116721*mean(P_E_I$estimate_con),6482847*mean(Quebec$estimate_con), 807984*mean(Saskatchewan$estimate_con), 3641258*mean(British_Columbia$estimate_con))/27373058
+
+Ndp_v <- sum(10484419*mean(Ontario$estimate_ndp),927347*mean(Manitoba$estimate_ndp),3023980*mean(Alberta$estimate_ndp),616704*mean(New_Brunswick$estimate_ndp),420067*mean(New_F_L$estimate_ndp),771411*mean(Nova_Scotia$estimate_ndp),116721*mean(P_E_I$estimate_ndp),6482847*mean(Quebec$estimate_ndp), 807984*mean(Saskatchewan$estimate_ndp), 3641258*mean(British_Columbia$estimate_ndp))/27373058
+
+Gre_v <- sum(10484419*mean(Ontario$estimate_gre),927347*mean(Manitoba$estimate_gre),3023980*mean(Alberta$estimate_gre),616704*mean(New_Brunswick$estimate_gre),420067*mean(New_F_L$estimate_gre),771411*mean(Nova_Scotia$estimate_gre),116721*mean(P_E_I$estimate_gre),6482847*mean(Quebec$estimate_gre), 807984*mean(Saskatchewan$estimate_gre), 3641258*mean(British_Columbia$estimate_gre))/27373058
+
+```
+
+```{r, message= FALSE, echo = FALSE}
+# Create result table
+estimate_table <- matrix(round(c(lib_v,mean(Ontario$estimate_lib),mean(Manitoba$estimate_lib),mean(Alberta$estimate_lib),mean(New_Brunswick$estimate_lib),mean(New_F_L$estimate_lib),mean(Nova_Scotia$estimate_lib),mean(P_E_I$estimate_lib),mean(Quebec$estimate_lib), mean(Saskatchewan$estimate_lib), mean(British_Columbia$estimate_lib),Con_v,mean(Ontario$estimate_con),mean(Manitoba$estimate_con),mean(Alberta$estimate_con),mean(New_Brunswick$estimate_con),mean(New_F_L$estimate_con),mean(Nova_Scotia$estimate_con),mean(P_E_I$estimate_con),mean(Quebec$estimate_con), mean(Saskatchewan$estimate_con), mean(British_Columbia$estimate_con),Ndp_v,
+mean(Ontario$estimate_ndp),mean(Manitoba$estimate_ndp),mean(Alberta$estimate_ndp),mean(New_Brunswick$estimate_ndp),mean(New_F_L$estimate_ndp),mean(Nova_Scotia$estimate_ndp),mean(P_E_I$estimate_ndp),mean(Quebec$estimate_ndp), mean(Saskatchewan$estimate_ndp), mean(British_Columbia$estimate_ndp),Gre_v,mean(Ontario$estimate_gre),mean(Manitoba$estimate_gre),mean(Alberta$estimate_gre),mean(New_Brunswick$estimate_gre),mean(New_F_L$estimate_gre),mean(Nova_Scotia$estimate_gre),mean(P_E_I$estimate_gre),mean(Quebec$estimate_gre), mean(Saskatchewan$estimate_gre), mean(British_Columbia$estimate_gre)),3), ncol = 11, byrow = TRUE)
+colnames(estimate_table) <- c("Overall Estimated Popular Vote","Ontario","Manitoba","Alberta","New Brunswick","Newfoundland and Labrador","Nova Scotia","Prince Edward Island","Quebec","Saskatchewan","British Columbia")
+rownames(estimate_table) <- c("Liberal","Conservative","NDP","Green")
+
+estimate_table %>%
+kbl() %>%
+  kable_classic(html_font = "Cambria") %>%
+  kable_styling(full_width = F, position = "left") %>%
+  footnote(general = "The estimation of the popular vote for the 4 parties, stated as vote share.",
+    number = "The overall estimated popular vote only accounts for the vote in the 10 provinces of Canada, not include the 3 terroteries of Canada.",
+    general_title = "Table 2",
+    number_title = "Note")
+
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+vote_share <- c(0.379,0.296,0.182,0.094,1-sum(0.379,0.296,0.182,0.094))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, main = "Vote share of Ontario, figure 2", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+legend("topright", c("Liberal","Conservative","NDP","Green","Other Party"),fill = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+vote_share <- c(0.371,0.159,0.114,0.083,1-sum(0.371,0.159,0.114,0.083))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, main = "Vote share of Quebec, figure 3", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+legend("topright", c("Liberal","Conservative","NDP","Green","Other Party"),fill = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+par(mfrow=c(1,3) )
+
+vote_share <- c(0.174,0.606,0.121,0.059,1-sum(0.174,0.606,0.121,0.059))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Alberta", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+vote_share <- c(0.285,0.265,0.234,0.169,round(1-sum(0.285,0.265,0.234,0.169),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "British Columbia", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+mtext(side=3, text="Vote Shares by Provinces, figure 4")
+
+plot.new()
+legend("left",legend=c("Liberal","Conservative","NDP","Green","Other Party"), fill=c("firebrick2","blue","chocolate1","chartreuse2","gold2"), box.lty=0, title="Legend")
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+par(mfrow=c(1,4) )
+
+vote_share <- c(0.244,0.412,0.186,0.126,round(1-sum(0.244,0.412,0.186,0.126),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Manitoba", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+
+vote_share <- c(0.134,0.528,0.233,0.062,round(1-sum(0.134,0.528,0.233,0.062),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Saskatchewan", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+
+vote_share <- c(0.395,0.227,0.159,0.159,round(1-sum(0.395,0.227,0.159,0.159),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Nova Scotia", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+mtext(side=3, text="Vote Shares by Provinces, figure 5")
+
+plot.new()
+legend("left",legend=c("Liberal","Conservative","NDP","Green","Other Party"), fill=c("firebrick2","blue","chocolate1","chartreuse2","gold2"), box.lty=0, title="Legend")
+```
+
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+par(mfrow=c(1,4) )
+
+vote_share <- c(0.358,0.239,0.109,0.251,1-sum(0.358,0.239,0.109,0.251))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "New Brunswick", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+
+vote_share <- c(0.426,0.198,0.255,0.057,round(1-sum(0.426,0.198,0.255,0.057),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Newfoundland and Labrador", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+
+vote_share <- c(0.324,0.305,0.111,0.253,round(1-sum(0.324,0.305,0.111,0.253),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Prince Edward Island", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+mtext(side=3, text="Vote Shares by Provinces, figure 6")
+
+plot.new()
+legend("left",legend=c("Liberal","Conservative","NDP","Green","Other Party"), fill=c("firebrick2","blue","chocolate1","chartreuse2","gold2"), box.lty=0, title="Legend")
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+#Create pie chart
+par(mfrow=c(1,3) )
+
+vote_share <- c(0.329,0.299,0.166,0.103,1-sum(0.329,0.299,0.166,0.103))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Estimation", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+vote_share <- c(0.331,0.344,0.159,0.065,round(1-sum(0.331,0.344,0.159,0.065),3))
+party <- c("Liberal","Conservative","NDP","Green","Other Party")
+
+pie(vote_share,labels = vote_share, xlab = "Official Result", col = c("firebrick2","blue","chocolate1","chartreuse2","gold2"))
+
+mtext(side=3, text="Overall Vote Shares, figure 7")
+
+plot.new()
+legend("left",legend=c("Liberal","Conservative","NDP","Green","Other Party"), fill=c("firebrick2","blue","chocolate1","chartreuse2","gold2"), box.lty=0, title="Legend")
+
+```
+
+```{r, message= FALSE, echo = FALSE}
+diff_gre <- as.numeric(c(mean(Ontario$estimate_gre)-0.062,mean(Manitoba$estimate_gre)-0.05,mean(Alberta$estimate_gre)-0.028,mean(New_Brunswick$estimate_gre)-0.17,mean(New_F_L$estimate_gre)-0.031,mean(Nova_Scotia$estimate_gre) -0.11,mean(P_E_I$estimate_gre)-0.209,mean(Quebec$estimate_gre)-0.045, mean(Saskatchewan$estimate_gre)-0.025, mean(British_Columbia$estimate_gre)-0.124))
+
+diff_con <- as.numeric(c(mean(Ontario$estimate_con)-0.332,mean(Manitoba$estimate_con)-0.458,mean(Alberta$estimate_con)-0.692,mean(New_Brunswick$estimate_con)-0.328,mean(New_F_L$estimate_con)-0.28,mean(Nova_Scotia$estimate_con) - 0.256,mean(P_E_I$estimate_con)-0.274,mean(Quebec$estimate_con)-0.16, mean(Saskatchewan$estimate_con)-0.643, mean(British_Columbia$estimate_con)-0.34))
+```
+
+
+```{r, message= FALSE, echo = FALSE}
+par(mfrow=c(2,1))
+
+barplot(diff_gre, names.arg = c("ON","MB","AB","NB","NL","NS","PE","QC","SK","BC"),main = "Difference in vote shares of the Green party, figure 8", col = ("grey"), xlab = "province")
+
+barplot(diff_con, names.arg = c("ON","MB","AB","NB","NL","NS","PE","QC","SK","BC"),main = "Difference in vote shares of the Conservative party, figure 9", col = ("grey"), xlab = "province")
+
+mtext(text="Figure 9",outer = TRUE)
+
+```
+
+
+
+
+
+
+
+
+
+
+3. 
+
+
+
+
+
